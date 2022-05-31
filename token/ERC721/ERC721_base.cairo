@@ -94,8 +94,8 @@ end
 
 func getQuestProgress{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(arr_len : felt, arr : felt*, questNumber : felt) -> (progress_len : felt, progress : felt*):
     let questNumber = questNumber - 1
-    let (questProgress) = hasCompletedQuest(questNumber + 1)
-    assert [arr + questNumber - arr_len - 1] = questProgress
+    let (questProgress) = hasCompletedQuest(arr_len + 1)
+    assert [arr + arr_len] = questProgress
     if questNumber == 0:
         return (arr_len + 1, arr)
     else:
