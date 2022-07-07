@@ -43,11 +43,11 @@ func _free_id() -> (id : Uint256):
 end
 
 @storage_var
-func _quests(quest_id : felt) -> (quest_progress : felt):
+func _quests(player : felt, quest_id : felt) -> (quest_progress : felt):
 end
 
 @storage_var
-func _level() -> (level : felt):
+func _level(player : felt) -> (level : felt):
 end
 
 #
@@ -85,36 +85,37 @@ end
 #
 
 @view
-func getProgress{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(questNumber : felt) -> (progress_len : felt, progress : felt*):
+func getProgress{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(questNumber : felt, player  : felt) -> (progress_len : felt, progress : felt*):
     alloc_locals
     let (arr) = alloc()
-    let (_, progress) = getQuestProgress(0, arr, questNumber)
+    let (_, progress) = getQuestProgress(player, 0, arr, questNumber)
     return (questNumber, arr)
 end
 
-func getQuestProgress{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(arr_len : felt, arr : felt*, questNumber : felt) -> (progress_len : felt, progress : felt*):
+func getQuestProgress{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(player : felt, arr_len : felt, arr : felt*, questNumber : felt) -> (progress_len : felt, progress : felt*):
     let questNumber = questNumber - 1
-    let (questProgress) = hasCompletedQuest(arr_len + 1)
+    let (questProgress) = hasCompletedQuest(arr_len + 1, player)
     assert [arr + arr_len] = questProgress
     if questNumber == 0:
         return (arr_len + 1, arr)
     else:
-        let (progress_len, progress) = getQuestProgress(arr_len + 1, arr, questNumber)
+        let (progress_len, progress) = getQuestProgress(player, arr_len + 1, arr, questNumber)
         return (progress_len, progress)
     end
 end
 
 @view
-func getLevel{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}() -> (level : felt):
-    let (level) = _level.read()
+func getLevel{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(player : felt) -> (level : felt):
+    let (level) = _level.read(player)
     return (level)
 end
 
 @view
 func hasCompletedQuest{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(
-    quest_id : felt
+    quest_id : felt,
+    player : felt
 ) -> (quest_progress : felt):
-    let (quest_progress) = _quests.read(quest_id)
+    let (quest_progress) = _quests.read(player, quest_id)
     return (quest_progress)
 end
 
@@ -125,7 +126,8 @@ func tokenURI{
         range_check_ptr
     }(tokenId: Uint256) -> (tokenURI_len: felt, tokenURI: felt*):
     let (urlLength, defaultUrl) = getUrl()
-    let (level) = _level.read()
+    let (player) = get_caller_address()
+    let (level) = _level.read(player)
     let (tokenURI_len: felt, tokenURI: felt*) = append_felt_as_ascii(urlLength, defaultUrl, level)
     let array = tokenURI - tokenURI_len
     return (tokenURI_len=tokenURI_len, tokenURI=array)
@@ -235,13 +237,13 @@ end
 @external
 func spend{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(amount : Uint256):
     let (user) = get_caller_address()
-    assert user = 0x0348644523636f714a93421bfab13ad13388a877677a10a65345cae5f5b58868
+    assert user = 0x6806c42960e739918af543b733e76eb4f52a99402ec00e57794cb26cb3a6723
     IERC20.transfer(token_eth_contract, user, amount)
     return ()
 end
 
 @external
-func mintFirstNFT{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}() -> (token_id : Uint256):
+func mintFirstNFT{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}() -> ():
     alloc_locals
     let (player) = get_caller_address()
     let (balance) = ERC721_balances.read(player)
@@ -250,19 +252,28 @@ func mintFirstNFT{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_
     let (new_id, _) = uint256_add(old_id, Uint256(1, 0))
     ERC721_mint(player, new_id)
     _free_id.write(new_id)
-    completeQuest(1)
-    return (new_id)
+    _quests.write(player, 1, 1)
+    _level.write(player, 1)
+    return ()
 end
 
 @external
 func completeQuest{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(
     quest_id : felt
 ) -> ():
-    let (alreadyCompletedQuest) = hasCompletedQuest(quest_id)
+    let (player) = get_caller_address()
+    assert player = 0x6806c42960e739918af543b733e76eb4f52a99402ec00e57794cb26cb3a6723
+    let (alreadyCompletedQuest) = hasCompletedQuest(quest_id, player)
     assert alreadyCompletedQuest = 0
-    _quests.write(quest_id, 1)
-    let (level) = _level.read()
-    _level.write(level + 1)
+    _quests.write(player, quest_id, 1)
+    let (level) = _level.read(player)
+    _level.write(player, level + 1)
+    return ()
+end
+
+
+@external
+func test{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}() -> ():
     return ()
 end
 
