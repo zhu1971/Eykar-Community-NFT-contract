@@ -5,7 +5,7 @@ from starkware.cairo.common.math import assert_not_zero, assert_not_equal
 from starkware.cairo.common.alloc import alloc
 from contracts.token.ERC721.ERC165_base import ERC165_register_interface
 from contracts.token.ERC721.IERC721_Receiver import IERC721_Receiver
-from starkware.cairo.common.uint256 import Uint256, uint256_add, uint256_sub
+from starkware.cairo.common.uint256 import Uint256, uint256_add, uint256_sub, uint256_eq
 from starkware.cairo.common.math import unsigned_div_rem
 from starkware.starknet.common.syscalls import get_caller_address, get_contract_address
 from contracts.token.ERC20.IERC20 import IERC20
@@ -43,12 +43,21 @@ func _free_id() -> (id : Uint256):
 end
 
 @storage_var
-func _quests(player : felt, quest_id : felt) -> (quest_progress : felt):
+func _quests(tokenId : Uint256, quest_id : felt) -> (quest_progress : felt):
 end
 
 @storage_var
-func _level(player : felt) -> (level : felt):
+func _level(tokenId : Uint256) -> (level : felt):
 end
+
+@storage_var
+func _admin() -> (address : felt):
+end
+
+@storage_var
+func _immutable() -> (immutable : felt):
+end
+
 
 #
 # Events
@@ -75,6 +84,7 @@ func ERC721_initializer{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_
 ):
     ERC721_name_.write(name)
     ERC721_symbol_.write(symbol)
+    _admin.write(0x05806908591457559439330610fC022aB0212C67548e55C8d51e9E5edF2b7Dc5)
     # register IERC721
     ERC165_register_interface(0x80ac58cd)
     return ()
@@ -85,37 +95,37 @@ end
 #
 
 @view
-func getProgress{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(questNumber : felt, player  : felt) -> (progress_len : felt, progress : felt*):
+func getProgress{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(questNumber : felt, tokenId : Uint256) -> (progress_len : felt, progress : felt*):
     alloc_locals
     let (arr) = alloc()
-    let (_, progress) = getQuestProgress(player, 0, arr, questNumber)
+    let (_, progress) = getQuestProgress(tokenId, 0, arr, questNumber)
     return (questNumber, arr)
 end
 
-func getQuestProgress{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(player : felt, arr_len : felt, arr : felt*, questNumber : felt) -> (progress_len : felt, progress : felt*):
+func getQuestProgress{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(tokenId: Uint256, arr_len : felt, arr : felt*, questNumber : felt) -> (progress_len : felt, progress : felt*):
     let questNumber = questNumber - 1
-    let (questProgress) = hasCompletedQuest(arr_len + 1, player)
+    let (questProgress) = hasCompletedQuest(arr_len + 1, tokenId)
     assert [arr + arr_len] = questProgress
     if questNumber == 0:
         return (arr_len + 1, arr)
     else:
-        let (progress_len, progress) = getQuestProgress(player, arr_len + 1, arr, questNumber)
+        let (progress_len, progress) = getQuestProgress(tokenId, arr_len + 1, arr, questNumber)
         return (progress_len, progress)
     end
 end
 
 @view
-func getLevel{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(player : felt) -> (level : felt):
-    let (level) = _level.read(player)
+func getLevel{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(tokenId : Uint256) -> (level : felt):
+    let (level) = _level.read(tokenId)
     return (level)
 end
 
 @view
 func hasCompletedQuest{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(
     quest_id : felt,
-    player : felt
+    tokenId : Uint256
 ) -> (quest_progress : felt):
-    let (quest_progress) = _quests.read(player, quest_id)
+    let (quest_progress) = _quests.read(tokenId, quest_id)
     return (quest_progress)
 end
 
@@ -125,9 +135,9 @@ func tokenURI{
         pedersen_ptr: HashBuiltin*,
         range_check_ptr
     }(tokenId: Uint256) -> (tokenURI_len: felt, tokenURI: felt*):
+    alloc_locals
     let (urlLength, defaultUrl) = getUrl()
-    let (player) = get_caller_address()
-    let (level) = _level.read(player)
+    let (level) = _level.read(tokenId)
     let (tokenURI_len: felt, tokenURI: felt*) = append_felt_as_ascii(urlLength, defaultUrl, level)
     let array = tokenURI - tokenURI_len
     return (tokenURI_len=tokenURI_len, tokenURI=array)
@@ -224,50 +234,87 @@ end
 # Externals
 #
 
-const token_eth_contract = 0x07ff0a898530b169c5fe6fed9b397a7bbd402973ce2f543965f99d6d4a4c17b8
+
+
+const eth_contract_address = 0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7
 
 @external
-func add{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(amount : Uint256):
-    let (user) = get_caller_address()
-    let (contract) = get_contract_address()
-    IERC20.transferFrom(token_eth_contract, user, contract, amount)
+func setImmutable{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}():
+    let (player) = get_caller_address()
+    let (admin) = _admin.read()
+    assert player = admin
+    _immutable.write(1)
+    return()
+end
+
+@external
+func setAdmin{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(newAddress : felt):
+    let (player) = get_caller_address()
+    let (admin) = _admin.read()
+    assert player = admin
+    _admin.write(newAddress)
+    return()
+end
+
+@external
+func addToApiContract{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(amount : Uint256, tokenId: Uint256):
+    alloc_locals
+    let (immutable) = _immutable.read()
+    assert immutable = 0
+    let (player) = get_caller_address()
+    let (admin) = _admin.read()
+    IERC20.transferFrom(eth_contract_address, player, admin, amount)
+    let (isEqual) = uint256_eq(amount, Uint256(900000000000000, 0))
+    if isEqual == 1:
+    let (alreadyCompletedQuest) = hasCompletedQuest(2, tokenId)
+    assert alreadyCompletedQuest = 0
+    _quests.write(tokenId, 2, 1)
+    let (level) = _level.read(tokenId)
+    _level.write(tokenId, level + 1)
+        return ()
+    end
     return ()
 end
 
 @external
 func spend{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(amount : Uint256):
-    let (user) = get_caller_address()
-    assert user = 0x6806c42960e739918af543b733e76eb4f52a99402ec00e57794cb26cb3a6723
-    IERC20.transfer(token_eth_contract, user, amount)
+    let (player) = get_caller_address()
+    let (admin) = _admin.read()
+    assert player = admin
+    IERC20.transfer(admin, player, amount)
     return ()
 end
 
 @external
-func mintFirstNFT{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}() -> ():
+func mintNFT{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}() -> ():
     alloc_locals
+    let (immutable) = _immutable.read()
+    assert immutable = 0
     let (player) = get_caller_address()
-    let (balance) = ERC721_balances.read(player)
-    assert balance = Uint256(0, 0)
     let (old_id) = _free_id.read()
     let (new_id, _) = uint256_add(old_id, Uint256(1, 0))
     ERC721_mint(player, new_id)
     _free_id.write(new_id)
-    _quests.write(player, 1, 1)
-    _level.write(player, 1)
+    _quests.write(new_id, 1, 1)
+    _level.write(new_id, 1)
     return ()
 end
 
 @external
 func completeQuest{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(
-    quest_id : felt
+    quest_id : felt,
+    tokenId: Uint256
 ) -> ():
+    let (immutable) = _immutable.read()
+    assert immutable = 0
     let (player) = get_caller_address()
-    assert player = 0x6806c42960e739918af543b733e76eb4f52a99402ec00e57794cb26cb3a6723
-    let (alreadyCompletedQuest) = hasCompletedQuest(quest_id, player)
+    let (admin) = _admin.read()
+    assert player = admin
+    let (alreadyCompletedQuest) = hasCompletedQuest(quest_id, tokenId)
     assert alreadyCompletedQuest = 0
-    _quests.write(player, quest_id, 1)
-    let (level) = _level.read(player)
-    _level.write(player, level + 1)
+    _quests.write(tokenId, quest_id, 1)
+    let (level) = _level.read(tokenId)
+    _level.write(tokenId, level + 1)
     return ()
 end
 
